@@ -8,6 +8,7 @@ using System.Threading;
 using System.IO.Ports;
 using System.Text;
 using flyfire.IO.Ports;
+using GodSharp.SerialPort;
 
 namespace SerialTestNetCore
 {
@@ -23,7 +24,8 @@ namespace SerialTestNetCore
         static int recvData = 0;
         //static SerialDevice mySer = new SerialDevice("/dev/serial0", BaudRate.B115200);
         //static CustomSerialPort mySer = new CustomSerialPort("/dev/COM1", 9600);
-        static CustomSerialPort mySer = new CustomSerialPort("COM3", 9600);
+        //static CustomSerialPort mySer = new CustomSerialPort("COM3", 9600);
+        static GodSerialPort gsp = new GodSerialPort("COM1",9600,"none");
         static List<Logical> logicals = new List<Logical> { };
         #endregion
 
@@ -41,7 +43,7 @@ namespace SerialTestNetCore
             {
                 Console.WriteLine(item);
             }
-            mySer.ReceivedEvent += MySer_DataReceived;
+           // mySer.ReceivedEvent += MySer_DataReceived;
             List<string> ipv4 = new List<string>();
 
             #region 初始化服务器IP
@@ -84,15 +86,26 @@ namespace SerialTestNetCore
             #region 启动串口
 
 
+            //try
+            //{   if(mySer!=null)
+            //        mySer.Open();
+            //    Console.WriteLine("Serial Open Success!");
+            //}
+            //catch (Exception ex)
+            //{
+
+            //    Console.WriteLine(ex.Message); 
+            //}
             try
-            {   if(mySer!=null)
-                    mySer.Open();
-                Console.WriteLine("Serial Open Success!");
+            {
+                gsp.Open();
+                if(gsp.Open())
+                    Console.WriteLine("Port OpenSuccess!");
             }
             catch (Exception ex)
             {
 
-                Console.WriteLine(ex.Message); 
+                Console.WriteLine(ex.Message);
             }
             #endregion
 
@@ -145,7 +158,8 @@ namespace SerialTestNetCore
                 
                 string cmd = e.Datagram.Remove(5, 3);
 
-                if(mySer.IsOpen)
+                //if(mySer.IsOpen)
+                if(gsp.IsOpen)
                 {
                     int retries = 0;
                     int retries1 = 0;
@@ -161,16 +175,41 @@ namespace SerialTestNetCore
                             {
                                 lock (objPortLock)
                                 {
-                                    CabinetLock.DealWithLocks(index, cmd, mySer);
+                                   // CabinetLock.DealWithLocks(index, cmd, mySer);
+                                    CabinetLock.DealWithLocks(index, cmd, gsp);
                                 }
                                 //【4】等待串口返回数据
-                                while (!isPortRecv&& retries1 < 3)
-                                {
-                                    Thread.Sleep(200);
-                                    retries1++;
-                                    Console.WriteLine($"waiting to port data-{retries}");
-                                    
-                                }
+                                //while (!isPortRecv&& retries1 < 3)
+                                //{
+                                //    Thread.Sleep(200);
+                                //    retries1++;
+                                //    Console.WriteLine($"waiting to port data-{retries}");
+
+                                //}
+                                gsp.UseDataReceived(true, (sp, bytes) => {
+                                    if (bytes != null && bytes.Length > 0)
+                                    {
+                                        Console.WriteLine($"Port Received: {BitConverter.ToString(bytes)}");
+                                        int data = 0;
+                                        if (bytes.Count() == 5)
+                                        {
+                                            switch (bytes[3])
+                                            {
+                                                case 0x00: data = 1; break;//开
+                                                case 0x11: data = 2; break;//关
+                                                default:
+                                                    data = 3; break;//出错
+
+                                            }
+                                        }
+                                        SetReceiveData(data);
+                                        lock (objFlagLock)
+                                        {
+                                            isPortRecv = true;
+                                        }
+                                    }
+                                });
+
                                 retries1 = 0;
                                 lock (objFlagLock)
                                 {
@@ -198,6 +237,12 @@ namespace SerialTestNetCore
                                 byte[] msg = Encoding.UTF8.GetBytes(returnStr);
                                 e.TcpClient.GetStream().Write(msg, 0, msg.Length);
                             }
+                            else if(!gsp.IsOpen)
+                            {
+                                
+                                byte[] msg = Encoding.UTF8.GetBytes("SerialComunicationError!");
+                                e.TcpClient.GetStream().Write(msg, 0, msg.Length);
+                            }
                             else
                             {
                                 returnStr = SendMessage(cmd, logical.Error, index);
@@ -216,7 +261,17 @@ namespace SerialTestNetCore
                 }
                 else
                 {
-                    mySer.Open();
+                    //mySer.Open();
+                    try
+                    {
+                        gsp.Open();
+                    }
+                    catch (Exception ex)
+                    {
+
+                        Console.WriteLine(ex.Message);
+                    }
+                   
                     byte[] msg = Encoding.Default.GetBytes("SerialComunicationError!");
 
                     e.TcpClient.GetStream().Write(msg, 0, msg.Length); // return confirmation

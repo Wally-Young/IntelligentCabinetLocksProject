@@ -7,7 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="flyfire.CustomSerialPort" Version="1.0.0" />
-    <PackageReference Include="NetCoreSerial" Version="1.1.1" />
+    <PackageReference Include="GodSharp.SerialPort" Version="1.2.0.5" />
   </ItemGroup>
 
 </Project>

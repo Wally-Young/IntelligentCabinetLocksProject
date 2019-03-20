@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Text;
 using System.IO.Ports;
 using flyfire.IO.Ports;
+using GodSharp.SerialPort;
 namespace SerialTestNetCore
+    
 {
     public class CabinetLock
     {
@@ -72,7 +74,21 @@ namespace SerialTestNetCore
             return "E";
         
         }
+        static public string DealWithLocks(int code, string cmd, GodSerialPort serial)
+        {
+            if (cmd[2] == 'O')
+            {
+                serial.Write(UnlockCmd(code));
+                return "0";
+            }
+            else if (cmd[0] == 'O' || cmd.StartsWith("A-R"))
+            {
+                serial.Write(ReadLockState(code));
+                return "R";
+            }
+            return "E";
 
-     
+        }
+
     }
 }
