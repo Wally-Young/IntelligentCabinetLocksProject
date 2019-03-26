@@ -58,19 +58,10 @@ namespace SerialTestNetCore
 
         }
 
-        static public string  DealWithLocks(int code,string cmd,CustomSerialPort serial)
+        static public void  DealWithLocks(int code,CustomSerialPort serial)
         {
-            if(cmd[2]=='O')
-            {
+           
                 serial.Write(UnlockCmd(code));
-                return "0";
-            }
-            else if(cmd[0]=='O'||cmd.StartsWith("A-R"))
-            {
-                serial.Write(ReadLockState(code));
-                return "R";
-            }
-            return "E";
         
         }
      
