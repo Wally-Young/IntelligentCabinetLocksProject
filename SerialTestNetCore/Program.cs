@@ -11,6 +11,7 @@ using flyfire.IO.Ports;
 using tools;
 using System.IO;
 using System.Collections;
+using System.Threading.Tasks;
 
 namespace SerialTestNetCore
 {
@@ -23,7 +24,12 @@ namespace SerialTestNetCore
         private static readonly object objFlagLock = new object();
         static CustomSerialPort mySer = null;
         static volatile byte[] sourcebyte = new byte[9];
-       
+
+        static bool[] isSendError = new bool[60];
+         static bool[] isNormalClose = new bool[60];
+        
+        //static bool isnormalclose = true;
+        static AsyncTcpClient AsyncTcpClient;
         //static CustomSerialPort mySer = new CustomSerialPort("COM3", 9600);
         static List<Logical> logicals = new List<Logical> { };
         static string configPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.ini");
@@ -33,6 +39,8 @@ namespace SerialTestNetCore
         static byte[] readOneall = { 0x80, 0x01, 0x00 ,0x33, 0xB2 };
         static byte[] readsecondAll = { 0x80, 0x02, 0x00, 0x33, 0xB1 };
 
+        
+
         #endregion
 
         static void Main(string[] args)
@@ -41,8 +49,10 @@ namespace SerialTestNetCore
             AsyncTcpServer server = null;
             int totalNum=0,rownum = 0, columnum=0, usedcabinet=0;
             string rangeRule="";
+            string serverip="";
+            int serverport=0;
             #endregion
-
+       
             #region Initial
 
             #region 读取箱体配置文件
@@ -54,6 +64,8 @@ namespace SerialTestNetCore
                 rownum = conip.GetIntValue("rowNum");
                 columnum = conip.GetIntValue("colunNum");
                 usedcabinet = conip.GetIntValue("usedNum");
+                serverip = conip.GetStringValue("ServerIP");
+                serverport = conip.GetIntValue("ServerPort");
             }
             catch (Exception ex)
             {
@@ -86,6 +98,23 @@ namespace SerialTestNetCore
             }
             #endregion
 
+            #region 建立客户端
+            IPEndPoint iPEndPoint = new IPEndPoint(IPAddress.Parse(serverip), serverport);
+            AsyncTcpClient = new AsyncTcpClient(iPEndPoint);
+            //AsyncTcpClient.DatagramReceived += AsyncTcpClient_DatagramReceived;
+            try
+            {
+                AsyncTcpClient.Connect();
+            }
+            catch (Exception ex)
+            {
+
+                Console.WriteLine(ex.Message);
+                Logger.Custom("log/", $"建立服务器连接出错：{ex.Message}");
+            }
+         
+            #endregion
+
             #region 启动串口
             string[] names = CustomSerialPort.GetPortNames();
             foreach (var item in names)
@@ -94,8 +123,8 @@ namespace SerialTestNetCore
             }
             try
             {
-               mySer = new CustomSerialPort("/dev/COM1", 9600);
-               //mySer = new CustomSerialPort("COM4", 9600);
+                mySer = new CustomSerialPort("/dev/COM1", 9600);
+                //mySer = new CustomSerialPort("COM1", 9600);
                 Console.WriteLine($"PortName:{mySer.PortName}");
                 if (mySer != null)
                 {
@@ -118,6 +147,7 @@ namespace SerialTestNetCore
             #endregion
 
             #region 初始化逻辑
+            //1是开，2关
             logicals.Clear();
             logicals.Add(new Logical("N-O-D-R", 1,"2", "1",2));
             logicals.Add(new Logical("A-O-D-R", 1,"2", "1",2));
@@ -125,27 +155,131 @@ namespace SerialTestNetCore
             logicals.Add(new Logical("C-R-D-R", -1,"-1", "1",-1));
             #endregion
 
+            #region 检查柜门状态
+            lock (objPortLock)
+            {
+                mySer.Write(readOneall);
+                Thread.Sleep(500);
+                mySer.Write(readsecondAll);
+                Thread.Sleep(500);
+            }
+
+            for (int i = 0; i < 60; i++)
+            {
+                if (CheckLockState(i + 1) == 2)
+                    isNormalClose[i] = true;
+                if (i < 3)
+                {
+                    Console.WriteLine($"D{i.ToString("000")} is normalClosed:{isNormalClose[i].ToString()}");
+                }
+            }
+            #endregion
+
             Console.WriteLine($"状态数组当前的大小时:{sourcebyte.Length}");
             foreach (var item in sourcebyte)
             {
                 Console.WriteLine(item.ToString("X"));
             }
+
             #endregion
+
+
+            
 
             while (true)
             {
                
                 lock(objPortLock)
                 {
-                    
-                    
+                    try
+                    {
                         mySer.Write(readOneall);
                         Thread.Sleep(500);
                         mySer.Write(readsecondAll);
                         Thread.Sleep(500);
-                    
-                    
+                    }
+                    catch (Exception ex)
+                    {
+
+                        Console.WriteLine(ex.Message);
+                        Logger.Custom("log/", $"主程序出错：{ex.Message}");
+                    }
+                        
                 }
+
+                for (int i = 0; i < 60; i++)
+                {
+                    #region 检查非法开门
+                    if (isNormalClose[i] && CheckLockState(i+1)==1&&!isSendError[i])
+                    {
+                        if (!AsyncTcpClient.Connected)
+                        {
+                            try
+                            {
+                                Console.WriteLine("client disconnect!");
+                                AsyncTcpClient = new AsyncTcpClient(iPEndPoint);
+                                AsyncTcpClient.Connect();
+                                if (AsyncTcpClient.Connected)
+                                {
+                                    AsyncTcpClient.Send(Encoding.Default.GetBytes($"D{(i + 1).ToString("000")} is opened Illegally!"));
+                                    isSendError[i] = true;
+                                    Console.WriteLine($"D{i + 1}非法开门了！");
+                                }
+                                  
+                            }
+                            catch (Exception ex)
+                            {
+
+                                Console.WriteLine(ex.Message);
+                                Logger.Custom("log/", $"建立服务器连接出错：{ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            AsyncTcpClient.Send(Encoding.Default.GetBytes($"D{(i+1).ToString("000")} is opened Illegally!"));
+                            isSendError[i] = true;
+                            Console.WriteLine($"D{i + 1}非法开门了！");
+                        }   
+                     
+                    }
+                    #endregion
+
+                    #region 等待非法开门关门
+                    if (isSendError[i]&&CheckLockState(i + 1) ==2)
+                    {
+                        if (!AsyncTcpClient.Connected)
+                        {
+                            try
+                            {
+                               
+                                Console.WriteLine("client disconnect!");
+                                AsyncTcpClient = new AsyncTcpClient(iPEndPoint);
+                                AsyncTcpClient.Connect();
+                                if(AsyncTcpClient.Connected)
+                                {
+                                    AsyncTcpClient.Send(Encoding.Default.GetBytes($"D{(i + 1).ToString("000")} is Closed!"));
+                                    isSendError[i] = false;
+                                }
+                                  
+                               
+                            }
+                            catch (Exception ex)
+                            {
+
+                                Console.WriteLine(ex.Message);
+                                Logger.Custom("log/", $"建立服务器连接出错：{ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            AsyncTcpClient.Send(Encoding.Default.GetBytes($"D{(i+1).ToString("000")} is closed!"));
+                            isSendError[i] = false;                
+                        }
+                    }
+                    #endregion
+                }
+              
+          
                 //delete threedays ago logger
                 if (DateTime.Now.Hour == 0 && DateTime.Now.Minute == 0 && DateTime.Now.Second <10)
                 {
@@ -175,6 +309,9 @@ namespace SerialTestNetCore
                 }
             }
         }
+
+       
+
 
         #region ServerEvent
         private static void Server_PlaintextReceived(object sender, TcpDatagramReceivedEventArgs<string> e)
@@ -264,7 +401,6 @@ namespace SerialTestNetCore
         }
         #endregion
 
-
         #region SerialDealMethod
 
         /// <summary>
@@ -274,8 +410,8 @@ namespace SerialTestNetCore
         /// <param name="arg2"></param>
         private static void MySer_DataReceived(object arg1, byte[] arg2)
         {
-                Console.WriteLine($"Port Received: {BitConverter.ToString(arg2)}");
-                Logger.Custom("log/", $"Port Received: { BitConverter.ToString(arg2)}");
+               // Console.WriteLine($"Port Received: {BitConverter.ToString(arg2)}");
+               // Logger.Custom("log/", $"Port Received: { BitConverter.ToString(arg2)}");
                 lock (objReceivedLock)
                 {
                   if (arg2.Count() == 7)
@@ -298,8 +434,6 @@ namespace SerialTestNetCore
  
         private static string SendMessage(string result,int code)
         {
-
-
             string msg = "D" + code.ToString("000") + "-" + result;
             return msg;
         }
@@ -372,6 +506,7 @@ namespace SerialTestNetCore
 
                     if(cmd[2]=='O')
                     {
+                        isNormalClose[index-1] = false;
                         while (!ischecked && retries < 5)
                         {
                             lock (objPortLock)
@@ -408,25 +543,30 @@ namespace SerialTestNetCore
                             tcpClient.GetStream().Write(msg, 0, msg.Length);
                             break;
                         }
-
+                       
                         DateTime dateTime = DateTime.Now;
                         Thread.Sleep(3000);
+                        bool timeoutFlag = false;
                         while (true && logical.NextState != -1)
                         {
                             try
                             {
-                                if ((DateTime.Now - dateTime).Minutes > 30)
+                                if ((DateTime.Now - dateTime).Minutes > 2&&!timeoutFlag)
                                 {
                                     string sendstr = SendMessage("1", index) + "-T";
                                     byte[] msg = Encoding.Default.GetBytes(sendstr);
                                     tcpClient.GetStream().Write(msg, 0, msg.Length); // return confirmation                  
-                                    break;
+                                    timeoutFlag = true;
+                                  
                                 }
                                 if (CheckLockState(index) == logical.NextState)
                                 {
                                     string sendstr = SendMessage("2", index) + "-S";
                                     byte[] msg = Encoding.Default.GetBytes(sendstr);
                                     tcpClient.GetStream().Write(msg, 0, msg.Length); // return confirmation
+                                    timeoutFlag = false;
+                                    isNormalClose[index - 1] = true;
+                                    isSendError[index-1] = false;
                                     break;
                                 }
                             }
@@ -466,6 +606,8 @@ namespace SerialTestNetCore
             }
 
         }
+
+        
         #endregion 
 
     }

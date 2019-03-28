@@ -115,11 +115,20 @@ namespace AsyncTcp
                     RaiseClientConnected(tcpClient);
                 }
 
-                NetworkStream networkStream = internalClient.NetworkStream;
-                networkStream.BeginRead(internalClient.Buffer, 0, internalClient.Buffer.Length, HandleDatagramReceived,
-                    internalClient);
+                try
+                {
+                    NetworkStream networkStream = internalClient.NetworkStream;
+                    networkStream.BeginRead(internalClient.Buffer, 0, internalClient.Buffer.Length, HandleDatagramReceived,
+                        internalClient);
 
-                tcpListener.BeginAcceptTcpClient(new AsyncCallback(HandleTcpClientAccepted), ar.AsyncState);
+                    tcpListener.BeginAcceptTcpClient(new AsyncCallback(HandleTcpClientAccepted), ar.AsyncState);
+                }
+                catch 
+                {
+
+                    
+                }
+               
             }
         }
 
